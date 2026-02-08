@@ -4,17 +4,21 @@ A Python framework for backtesting futures trading strategies, specifically desi
 
 ## Features
 
-- **Micro Futures Support**: Pre-configured specs for MNQ, MES, MGC, MYM
+- **Micro Futures Support**: Pre-configured specs for MNQ, MES, MGC, MYM with tick values and margins
 - **Prop Firm Integration**: Built-in rules for Topstep, Lucid, Take Profit Trader
   - Daily loss limits
   - EOD & intraday trailing drawdowns
   - Configurable close times (Topstep: 4pm ET, Others: 5pm ET)
   - Position sizing limits
+- **OCO Bracket Orders**: Built-in support for One-Cancels-Other orders
+  - Configurable TP/SL in ticks (perfect for prop firm risk management)
+  - Automatic cancellation of linked orders
+  - Buy and sell bracket support
 - **Multi-Timeframe**: Backtest across multiple timeframes (1min to daily)
 - **Multi-Instrument**: Trade multiple contracts simultaneously
-- **Order Types**: Market, Limit, Stop, Stop-Limit, OCO
+- **Order Types**: Market, Limit, Stop, Stop-Limit, OCO Brackets
 - **Risk Management**: Real-time prop firm rule enforcement
-- **Performance Metrics**: Sharpe, Sortino, Profit Factor, Max Drawdown, Calmar
+- **Performance Metrics**: Sharpe, Sortino, Profit Factor, Max Drawdown, Calmar, Expectancy
 - **Interactive Plotting**: Plotly-based equity curves and trade analysis
 
 ## Installation
@@ -168,37 +172,74 @@ Built-in micro futures specs:
 | MGC | Micro Gold | 0.10 | $1.00 | $10.00 |
 | MYM | Micro E-mini Dow | 1.00 | $0.50 | $0.50 |
 
-## Order Types
+## OCO Bracket Orders (One-Cancels-Other)
+
+Perfect for prop firm trading with predefined risk/reward. When you enter a position, automatically attach take profit and stop loss orders that are linked together:
 
 ```python
-# Market order
-self.buy('MES', size=1)
-
-# Limit order
-self.buy('MES', size=1, price=4500, exectype=OrderType.LIMIT)
-
-# Stop order
-self.buy('MES', size=1, stop_price=4550, exectype=OrderType.STOP)
-
-# Stop-Limit order
-self.buy('MES', size=1, price=4500, stop_price=4550, exectype=OrderType.STOP_LIMIT)
-
-# OCO Bracket Orders (One-Cancels-Other)
-# Perfect for prop firm trading with predefined TP/SL
+# Long bracket - TP 20 ticks above, SL 10 ticks below
 entry_id, tp_id, sl_id = self.buy_bracket(
     symbol='MES',
     size=1,
-    take_profit_ticks=20,  # 20 ticks = $25 for MES
-    stop_loss_ticks=10     # 10 ticks = $12.50 for MES
+    take_profit_ticks=20,   # 20 ticks = $25 profit for MES
+    stop_loss_ticks=10      # 10 ticks = $12.50 risk for MES
 )
 
-# Sell bracket for short positions
+# Short bracket - TP 20 ticks below, SL 10 ticks above
 entry_id, tp_id, sl_id = self.sell_bracket(
+    symbol='MNQ',
+    size=1,
+    take_profit_ticks=20,   # 20 ticks = $10 profit for MNQ
+    stop_loss_ticks=10      # 10 ticks = $5 risk for MNQ
+)
+
+# With limit entry (entry at specific price)
+entry_id, tp_id, sl_id = self.buy_bracket(
     symbol='MES',
     size=1,
     take_profit_ticks=20,
-    stop_loss_ticks=10
+    stop_loss_ticks=10,
+    price=4500.00,          # Limit entry at $4500
+    exectype=OrderType.LIMIT
 )
+```
+
+**How it works:**
+1. Entry order is submitted
+2. TP and SL orders are stored (not active yet)
+3. When entry fills → TP and SL become active as an OCO pair
+4. When TP or SL fills → the other is automatically cancelled
+
+**Tick Values Reference:**
+| Symbol | Tick Size | Tick Value | 20 Ticks | 10 Ticks |
+|--------|-----------|------------|----------|----------|
+| MES | $0.25 | $1.25 | $25.00 | $12.50 |
+| MNQ | $0.25 | $0.50 | $10.00 | $5.00 |
+| MGC | $0.10 | $1.00 | $20.00 | $10.00 |
+| MYM | $1.00 | $0.50 | $10.00 | $5.00 |
+
+## Order Types
+
+```python
+# Market order - fills immediately at market price
+self.buy('MES', size=1)
+self.sell('MES', size=1)
+
+# Limit order - fills at specified price or better
+self.buy('MES', size=1, price=4500, exectype=OrderType.LIMIT)
+
+# Stop order - becomes market order when stop price hit
+self.buy('MES', size=1, stop_price=4550, exectype=OrderType.STOP)
+
+# Stop-Limit order - becomes limit order when stop price hit
+self.buy('MES', size=1, price=4500, stop_price=4550, exectype=OrderType.STOP_LIMIT)
+
+# Close position
+self.close('MES')  # Market order to close position
+
+# Cancel orders
+self.cancel(order_id)
+self.cancel_all('MES')  # Cancel all orders for symbol
 ```
 
 ## Performance Metrics
@@ -243,7 +284,14 @@ fig.show()
 
 See the `examples/` directory for complete strategies:
 
-- `sma_strategy.py` - Simple moving average crossover
+- `sma_strategy.py` - Simple moving average crossover strategy
+- `oco_bracket_strategy.py` - Demonstrates OCO bracket orders with configurable TP/SL
+
+Run an example:
+```bash
+cd examples
+python oco_bracket_strategy.py
+```
 
 ## Project Structure
 
@@ -273,13 +321,18 @@ futures-backtesting/
 
 ## Roadmap
 
-- [ ] OCO order support
+- [x] OCO bracket order support
+- [x] Prop firm risk management
 - [ ] Walk-forward optimization
-- [ ] More prop firm configs (Apex, etc.)
+- [ ] More prop firm configs (Apex, The5ers, etc.)
 - [ ] CSV/parquet data loaders
 - [ ] Monte Carlo simulation
-- [ ] Parameter optimization
+- [ ] Parameter optimization (grid search, genetic algorithms)
 - [ ] Jupyter notebook examples
+- [ ] Live trading integration (Interactive Brokers, Tradovate)
+- [ ] Multi-threading for faster backtests
+- [ ] Custom indicator library
+- [ ] Trade journaling and analytics
 
 ## License
 
