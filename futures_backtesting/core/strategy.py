@@ -8,6 +8,7 @@ import pandas as pd
 
 from .data import DataFeed, MultiDataFeed
 from .orders import Order, OrderType, OrderSide
+from ..contracts.micros import get_contract
 
 
 class BaseStrategy(ABC):
@@ -177,6 +178,142 @@ class BaseStrategy(ABC):
             if order_id:
                 order_ids.append(order_id)
         return order_ids
+    
+    def buy_bracket(self, symbol: str, size: int = 1,
+                    take_profit_ticks: int = 20,
+                    stop_loss_ticks: int = 10,
+                    price: Optional[float] = None,
+                    exectype: OrderType = OrderType.MARKET) -> tuple:
+        """
+        Place a buy bracket order with entry, take profit, and stop loss.
+        
+        The take profit and stop loss are linked as an OCO pair (One-Cancels-Other).
+        When one fills, the other is automatically cancelled.
+        
+        Args:
+            symbol: Symbol to trade
+            size: Number of contracts
+            take_profit_ticks: Number of ticks for take profit (above entry for longs)
+            stop_loss_ticks: Number of ticks for stop loss (below entry for longs)
+            price: Entry price (for limit/stop entries)
+            exectype: Entry order type
+            
+        Returns:
+            Tuple of (entry_order_id, tp_order_id, sl_order_id)
+        """
+        # Get contract specs for tick size
+        contract = get_contract(symbol)
+        tick_size = contract.tick_size
+        
+        # Determine entry price for calculating TP/SL
+        entry_price = price if price is not None else self.get_close(symbol)
+        
+        # Calculate take profit price (above entry for long)
+        tp_price = entry_price + (take_profit_ticks * tick_size)
+        
+        # Calculate stop loss price (below entry for long)
+        sl_price = entry_price - (stop_loss_ticks * tick_size)
+        
+        # Create entry order
+        entry_order = Order(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            size=size,
+            order_type=exectype,
+            price=price,
+            timestamp=self.get_datetime()
+        )
+        
+        # Create take profit order (sell limit at TP price)
+        tp_order = Order(
+            symbol=symbol,
+            side=OrderSide.SELL,
+            size=size,
+            order_type=OrderType.LIMIT,
+            price=tp_price,
+            timestamp=self.get_datetime()
+        )
+        
+        # Create stop loss order (sell stop at SL price)
+        sl_order = Order(
+            symbol=symbol,
+            side=OrderSide.SELL,
+            size=size,
+            order_type=OrderType.STOP,
+            stop_price=sl_price,
+            timestamp=self.get_datetime()
+        )
+        
+        # Submit as bracket order
+        return self.broker.submit_bracket_order(entry_order, tp_order, sl_order)
+    
+    def sell_bracket(self, symbol: str, size: int = 1,
+                     take_profit_ticks: int = 20,
+                     stop_loss_ticks: int = 10,
+                     price: Optional[float] = None,
+                     exectype: OrderType = OrderType.MARKET) -> tuple:
+        """
+        Place a sell bracket order with entry, take profit, and stop loss.
+        
+        The take profit and stop loss are linked as an OCO pair (One-Cancels-Other).
+        When one fills, the other is automatically cancelled.
+        
+        Args:
+            symbol: Symbol to trade
+            size: Number of contracts
+            take_profit_ticks: Number of ticks for take profit (below entry for shorts)
+            stop_loss_ticks: Number of ticks for stop loss (above entry for shorts)
+            price: Entry price (for limit/stop entries)
+            exectype: Entry order type
+            
+        Returns:
+            Tuple of (entry_order_id, tp_order_id, sl_order_id)
+        """
+        # Get contract specs for tick size
+        contract = get_contract(symbol)
+        tick_size = contract.tick_size
+        
+        # Determine entry price for calculating TP/SL
+        entry_price = price if price is not None else self.get_close(symbol)
+        
+        # Calculate take profit price (below entry for short)
+        tp_price = entry_price - (take_profit_ticks * tick_size)
+        
+        # Calculate stop loss price (above entry for short)
+        sl_price = entry_price + (stop_loss_ticks * tick_size)
+        
+        # Create entry order
+        entry_order = Order(
+            symbol=symbol,
+            side=OrderSide.SELL,
+            size=size,
+            order_type=exectype,
+            price=price,
+            timestamp=self.get_datetime()
+        )
+        
+        # Create take profit order (buy limit at TP price)
+        tp_order = Order(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            size=size,
+            order_type=OrderType.LIMIT,
+            price=tp_price,
+            timestamp=self.get_datetime()
+        )
+        
+        # Create stop loss order (buy stop at SL price)
+        sl_order = Order(
+            symbol=symbol,
+            side=OrderSide.BUY,
+            size=size,
+            order_type=OrderType.STOP,
+            stop_price=sl_price,
+            timestamp=self.get_datetime()
+        )
+        
+        # Submit as bracket order
+        return self.broker.submit_bracket_order(entry_order, tp_order, sl_order)
     
     def cancel(self, order_id: str) -> bool:
         """Cancel an order."""

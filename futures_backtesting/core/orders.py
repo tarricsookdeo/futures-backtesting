@@ -144,21 +144,48 @@ class OrderManager:
         self.orders: Dict[str, Order] = {}
         self.positions: Dict[str, Position] = {}
         self._pending_orders: List[Order] = []
+        self._oco_groups: Dict[str, List[str]] = {}  # oco_id -> [order_ids]
+        self._bracket_children: Dict[str, tuple] = {}  # parent_id -> (tp_order, sl_order)
         
     def submit_order(self, order: Order) -> str:
         """Submit a new order."""
         self.orders[order.order_id] = order
         self._pending_orders.append(order)
+        
+        # Track OCO group membership
+        if order.oco_id:
+            if order.oco_id not in self._oco_groups:
+                self._oco_groups[order.oco_id] = []
+            self._oco_groups[order.oco_id].append(order.order_id)
+        
         return order.order_id
     
-    def cancel_order(self, order_id: str) -> bool:
-        """Cancel an order."""
-        if order_id in self.orders:
-            order = self.orders[order_id]
-            if order.is_active():
-                order.status = OrderStatus.CANCELLED
-                return True
-        return False
+    def cancel_order(self, order_id: str, cancel_linked_oco: bool = True) -> bool:
+        """Cancel an order.
+        
+        Args:
+            order_id: Order to cancel
+            cancel_linked_oco: If True, also cancel other orders in the OCO group
+        """
+        if order_id not in self.orders:
+            return False
+            
+        order = self.orders[order_id]
+        if not order.is_active():
+            return False
+            
+        # Cancel this order
+        order.status = OrderStatus.CANCELLED
+        
+        # Cancel linked OCO orders
+        if cancel_linked_oco and order.oco_id:
+            for linked_id in self._oco_groups.get(order.oco_id, []):
+                if linked_id != order_id and linked_id in self.orders:
+                    linked_order = self.orders[linked_id]
+                    if linked_order.is_active():
+                        linked_order.status = OrderStatus.CANCELLED
+        
+        return True
     
     def cancel_all(self, symbol: Optional[str] = None):
         """Cancel all orders, optionally filtered by symbol."""
@@ -166,6 +193,57 @@ class OrderManager:
             if order.is_active():
                 if symbol is None or order.symbol == symbol:
                     order.status = OrderStatus.CANCELLED
+    
+    def submit_oco_pair(self, order1: Order, order2: Order) -> tuple:
+        """
+        Submit two orders as an OCO (One-Cancels-Other) pair.
+        When one fills, the other is automatically cancelled.
+        
+        Args:
+            order1: First order (typically take profit)
+            order2: Second order (typically stop loss)
+            
+        Returns:
+            Tuple of (order1_id, order2_id)
+        """
+        oco_id = str(uuid.uuid4())[:8]
+        order1.oco_id = oco_id
+        order2.oco_id = oco_id
+        
+        id1 = self.submit_order(order1)
+        id2 = self.submit_order(order2)
+        
+        return id1, id2
+    
+    def submit_bracket_order(self, entry_order: Order,
+                            tp_order: Order,
+                            sl_order: Order) -> tuple:
+        """
+        Submit a bracket order with entry, take profit, and stop loss.
+        
+        The take profit and stop loss are stored and will be activated
+        when the entry order fills.
+        
+        Args:
+            entry_order: The entry order (market, limit, etc.)
+            tp_order: Take profit order
+            sl_order: Stop loss order
+            
+        Returns:
+            Tuple of (entry_id, tp_id, sl_id)
+        """
+        # Submit entry order first
+        entry_id = self.submit_order(entry_order)
+
+        # Store TP and SL as bracket children
+        # They will be activated when entry fills
+        self._bracket_children[entry_id] = (tp_order, sl_order)
+
+        # Also store orders in the orders dict for tracking
+        self.orders[tp_order.order_id] = tp_order
+        self.orders[sl_order.order_id] = sl_order
+
+        return entry_id, tp_order.order_id, sl_order.order_id
     
     def get_position(self, symbol: str) -> Position:
         """Get or create position for symbol."""
@@ -235,6 +313,28 @@ class OrderManager:
                 order.fill_time = timestamp
                 order.status = OrderStatus.FILLED
                 fills.append((order, fill_price))
+
+                # Activate bracket children if this is a parent order
+                if order.order_id in self._bracket_children:
+                    tp_order, sl_order = self._bracket_children[order.order_id]
+                    # Link TP and SL as OCO
+                    oco_id = str(uuid.uuid4())[:8]
+                    tp_order.oco_id = oco_id
+                    sl_order.oco_id = oco_id
+                    self._oco_groups[oco_id] = [tp_order.order_id, sl_order.order_id]
+                    # Add to pending
+                    self._pending_orders.append(tp_order)
+                    self._pending_orders.append(sl_order)
+                    # Remove from bracket children
+                    del self._bracket_children[order.order_id]
+
+                # Cancel linked OCO orders
+                if order.oco_id:
+                    for linked_id in self._oco_groups.get(order.oco_id, []):
+                        if linked_id != order.order_id and linked_id in self.orders:
+                            linked_order = self.orders[linked_id]
+                            if linked_order.is_active():
+                                linked_order.status = OrderStatus.CANCELLED
             else:
                 still_pending.append(order)
         

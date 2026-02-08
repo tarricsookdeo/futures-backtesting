@@ -183,8 +183,22 @@ self.buy('MES', size=1, stop_price=4550, exectype=OrderType.STOP)
 # Stop-Limit order
 self.buy('MES', size=1, price=4500, stop_price=4550, exectype=OrderType.STOP_LIMIT)
 
-# OCO (One-Cancels-Other) - for brackets
-# (Coming in future version)
+# OCO Bracket Orders (One-Cancels-Other)
+# Perfect for prop firm trading with predefined TP/SL
+entry_id, tp_id, sl_id = self.buy_bracket(
+    symbol='MES',
+    size=1,
+    take_profit_ticks=20,  # 20 ticks = $25 for MES
+    stop_loss_ticks=10     # 10 ticks = $12.50 for MES
+)
+
+# Sell bracket for short positions
+entry_id, tp_id, sl_id = self.sell_bracket(
+    symbol='MES',
+    size=1,
+    take_profit_ticks=20,
+    stop_loss_ticks=10
+)
 ```
 
 ## Performance Metrics

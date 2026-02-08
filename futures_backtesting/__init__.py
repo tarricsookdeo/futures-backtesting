@@ -10,7 +10,7 @@ __version__ = "0.1.0"
 # Core components
 from .core.backtest import BacktestEngine, BacktestResult
 from .core.strategy import BaseStrategy
-from .core.orders import Order, OrderType, OrderSide
+from .core.orders import Order, OrderType, OrderSide, OrderStatus
 from .core.data import DataFeed, MultiDataFeed
 from .core.risk import RiskManager
 from .core.metrics import calculate_all_metrics, format_metrics
