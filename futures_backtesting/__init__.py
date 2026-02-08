@@ -21,6 +21,23 @@ from .core.plotting import (
     create_full_report
 )
 
+# Utilities
+from .utils.data_loaders import (
+    DataLoader,
+    TradingViewLoader,
+    ParquetLoader,
+    load_tradingview,
+    load_parquet
+)
+
+from .utils.journal import (
+    TradeJournal,
+    TradeJournalEntry,
+    TradeJournalExporter,
+    create_trade_journal,
+    load_journal
+)
+
 # Contracts
 from .contracts.micros import (
     ContractSpec,
@@ -52,10 +69,11 @@ __all__ = [
     'Order',
     'OrderType',
     'OrderSide',
+    'OrderStatus',
     'DataFeed',
     'MultiDataFeed',
     'RiskManager',
-    
+
     # Metrics & Plotting
     'calculate_all_metrics',
     'format_metrics',
@@ -63,7 +81,7 @@ __all__ = [
     'plot_monthly_returns',
     'plot_trade_distribution',
     'create_full_report',
-    
+
     # Contracts
     'ContractSpec',
     'MES',
@@ -73,7 +91,7 @@ __all__ = [
     'get_contract',
     'calculate_pnl',
     'CONTRACTS',
-    
+
     # Prop Firms
     'PropFirmConfig',
     'DrawdownType',
@@ -85,4 +103,18 @@ __all__ = [
     'LUCID_100K',
     'TAKE_PROFIT_50K',
     'TAKE_PROFIT_100K',
+
+    # Data Loaders
+    'DataLoader',
+    'TradingViewLoader',
+    'ParquetLoader',
+    'load_tradingview',
+    'load_parquet',
+
+    # Journal
+    'TradeJournal',
+    'TradeJournalEntry',
+    'TradeJournalExporter',
+    'create_trade_journal',
+    'load_journal',
 ]

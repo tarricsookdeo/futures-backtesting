@@ -12,6 +12,7 @@ from .orders import OrderManager, Position, Order
 from .risk import RiskManager
 from ..prop_firms.configs import PropFirmConfig
 from ..contracts.micros import calculate_pnl, get_contract
+from ..utils.journal import TradeJournal, TradeJournalEntry
 
 
 class BacktestResult:
@@ -150,41 +151,45 @@ class BacktestEngine:
         results = engine.run()
     """
     
-    def __init__(self, 
+    def __init__(self,
                  data: MultiDataFeed,
                  strategy_class: Type[BaseStrategy],
                  prop_firm_config: PropFirmConfig,
                  commission_per_contract: float = 2.50,
-                 strategy_params: Optional[Dict] = None):
+                 strategy_params: Optional[Dict] = None,
+                 journal: Optional[TradeJournal] = None):
         """
         Initialize backtest engine.
-        
+
         Args:
             data: MultiDataFeed with OHLCV data
             strategy_class: Strategy class (subclass of BaseStrategy)
             prop_firm_config: Prop firm configuration
             commission_per_contract: Commission per contract per side
             strategy_params: Optional parameters to pass to strategy
+            journal: Optional TradeJournal to populate with trade details
         """
         self.data = data
         self.strategy_class = strategy_class
         self.prop_firm_config = prop_firm_config
         self.commission_per_contract = commission_per_contract
         self.strategy_params = strategy_params or {}
-        
+        self.journal = journal
+
         # Initialize components
         self.broker = OrderManager()
         self.risk_manager = RiskManager(prop_firm_config)
         self.strategy: Optional[BaseStrategy] = None
-        
+
         # State
         self.cash = prop_firm_config.initial_balance
         self.equity = prop_firm_config.initial_balance
         self.current_time: Optional[datetime] = None
-        
+
         # Results
         self.results = BacktestResult()
         self._trade_log: Dict[str, Dict] = {}  # Track open trades
+        self._journal_entries: Dict[str, TradeJournalEntry] = {}  # Track journal entries
         
     def run(self) -> BacktestResult:
         """Run the backtest."""
@@ -234,18 +239,18 @@ class BacktestEngine:
         """Process an order fill."""
         symbol = order.symbol
         size = order.size if order.is_buy() else -order.size
-        
+
         # Get position before update
         position = self.broker.get_position(symbol)
         prev_size = position.size
-        
+
         # Update position
         position.update(fill_price, size, timestamp)
-        
+
         # Calculate commission
         commission = abs(size) * self.commission_per_contract
         self.cash -= commission
-        
+
         # Check if this closed a trade
         if prev_size != 0 and position.size == 0:
             # Trade completed
@@ -253,20 +258,37 @@ class BacktestEngine:
             if entry_info:
                 contract = get_contract(symbol)
                 pnl = calculate_pnl(symbol, entry_info['price'], fill_price, entry_info['size'])
-                
+                side = 'LONG' if entry_info['size'] > 0 else 'SHORT'
+
                 self.results.add_trade(
                     timestamp=timestamp,
                     symbol=symbol,
-                    side='LONG' if entry_info['size'] > 0 else 'SHORT',
+                    side=side,
                     size=abs(entry_info['size']),
                     entry_price=entry_info['price'],
                     exit_price=fill_price,
                     pnl=pnl,
                     commission=commission
                 )
-                
+
+                # Create journal entry if journal is enabled
+                if self.journal:
+                    entry = TradeJournalEntry(
+                        entry_time=entry_info['timestamp'],
+                        exit_time=timestamp,
+                        symbol=symbol,
+                        side=side,
+                        size=abs(entry_info['size']),
+                        entry_price=entry_info['price'],
+                        exit_price=fill_price,
+                        gross_pnl=pnl,
+                        commission=commission,
+                        net_pnl=pnl - commission
+                    )
+                    self.journal.add_entry(entry)
+
                 self._trade_log.pop(symbol, None)
-        
+
         elif prev_size == 0 and position.size != 0:
             # New trade opened
             self._trade_log[symbol] = {
@@ -274,12 +296,18 @@ class BacktestEngine:
                 'size': position.size,
                 'timestamp': timestamp
             }
-        
+
         # Notify strategy
         self.strategy.notify_order(order)
-        
+
+        # Notify trade completion (only if we just closed a position)
         if prev_size != 0 and position.size == 0:
-            entry_info = self._trade_log.get(symbol)
+            # Recalculate for notification (entry_info was popped)
+            entry_info = None
+            for trade in position.trades:
+                if trade['position_after'] != 0:
+                    entry_info = trade
+
             if entry_info:
                 contract = get_contract(symbol)
                 pnl = calculate_pnl(symbol, entry_info['price'], fill_price, entry_info['size'])

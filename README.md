@@ -14,6 +14,14 @@ A Python framework for backtesting futures trading strategies, specifically desi
   - Configurable TP/SL in ticks (perfect for prop firm risk management)
   - Automatic cancellation of linked orders
   - Buy and sell bracket support
+- **Data Loaders**: Import data from TradingView CSV, generic CSV, or Parquet
+  - Auto-detection of symbol and timeframe from filename
+  - Standard OHLCV format validation
+- **Trade Journal**: Comprehensive trade tracking and export
+  - Detailed trade information (entry/exit, P&L, duration, MFE/MAE)
+  - Export to CSV, JSON, or Excel
+  - Setup type and market condition tags
+  - Notes and screenshot support
 - **Multi-Timeframe**: Backtest across multiple timeframes (1min to daily)
 - **Multi-Instrument**: Trade multiple contracts simultaneously
 - **Order Types**: Market, Limit, Stop, Stop-Limit, OCO Brackets
@@ -35,27 +43,15 @@ pip install -r requirements.txt
 import pandas as pd
 from futures_backtesting import (
     BaseStrategy, BacktestEngine, MultiDataFeed,
-    TOPSTEP_50K, OrderType
+    TOPSTEP_50K, OrderType,
+    load_tradingview, create_trade_journal
 )
 
-# Create your strategy
-class MyStrategy(BaseStrategy):
-    def __init__(self):
-        super().__init__()
-        
-    def initialize(self):
-        # Set up indicators here
-        pass
-    
-    def next(self):
-        # Trading logic here - called for each bar
-        if self.is_flat('MES'):
-            self.buy('MES', size=1)
-        elif self.get_position('MES') > 0:
-            self.close('MES')
+# Load TradingView data
+data = load_tradingview('MES_5min.csv', symbol='MES')
 
-# Load your data (OHLCV DataFrame with DatetimeIndex)
-data = pd.read_csv('MES_data.csv', index_col='timestamp', parse_dates=True)
+# Create trade journal
+journal = create_trade_journal("My Backtest")
 
 # Set up backtest
 feed = MultiDataFeed()
@@ -64,8 +60,9 @@ feed.add_data(data, 'MES', '5min')
 engine = BacktestEngine(
     data=feed,
     strategy_class=MyStrategy,
-    prop_firm_config=TOPSTEP_50K,  # Use Topstep 50K rules
-    commission_per_contract=2.50
+    prop_firm_config=TOPSTEP_50K,
+    commission_per_contract=2.50,
+    journal=journal  # Optional: track all trades in journal
 )
 
 # Run backtest
@@ -74,10 +71,9 @@ results = engine.run()
 # View results
 print(engine.get_summary())
 
-# Plot results
-from futures_backtesting import plot_equity_curve
-fig = plot_equity_curve(results.equity_curve, results.trades)
-fig.show()
+# Export journal
+journal.export_csv('my_trades.csv')
+journal.export_json('my_trades.json')
 ```
 
 ## Data Format
@@ -99,6 +95,91 @@ data = pd.DataFrame({
     'volume': [...]
 }, index=pd.DatetimeIndex([...]))
 ```
+
+## Loading Data
+
+### TradingView CSV
+```python
+from futures_backtesting import load_tradingview
+
+# Auto-detects symbol and timeframe from filename
+data = load_tradingview('MES_5min.csv')
+
+# Or specify explicitly
+data = load_tradingview('mydata.csv', symbol='MNQ', timeframe='15min')
+```
+
+### Generic CSV
+```python
+from futures_backtesting import DataLoader
+
+# With auto-detection
+data = DataLoader.load('data.csv')
+
+# With custom column mapping
+data = DataLoader.load(
+    'data.csv',
+    column_mapping={
+        'Open': 'open',
+        'High': 'high',
+        'Low': 'low',
+        'Close': 'close',
+        'Vol': 'volume'
+    }
+)
+```
+
+### Parquet (Fast for large datasets)
+```python
+from futures_backtesting import load_parquet
+
+# Load compressed parquet
+data = load_parquet('large_dataset.parquet')
+```
+
+## Trade Journal
+
+Track detailed information about every trade for post-analysis:
+
+```python
+from futures_backtesting import create_trade_journal, TradeJournalEntry
+
+# Create journal
+journal = create_trade_journal("My Strategy Journal")
+
+# Use in backtest
+engine = BacktestEngine(
+    data=feed,
+    strategy_class=MyStrategy,
+    prop_firm_config=TOPSTEP_50K,
+    journal=journal  # All trades automatically recorded
+)
+
+results = engine.run()
+
+# View statistics
+journal.print_summary()
+
+# Export for analysis
+journal.export_csv('trades.csv')
+journal.export_json('trades.json')
+
+# Filter entries
+winners = journal.get_entries(min_pnl=0)
+mes_trades = journal.get_entries(symbol='MES')
+recent = journal.get_entries(start_date=datetime(2024, 1, 1))
+```
+
+### Journal Fields
+Each trade entry captures:
+- **Basic**: entry/exit times, symbol, side, size, prices
+- **P&L**: gross P&L, commission, net P&L, R-multiple
+- **Risk**: stop loss, take profit, initial risk, risk:reward
+- **Performance**: max favorable/adverse excursion, exit efficiency
+- **Context**: setup type, market condition, session, market structure
+- **Analysis**: entry/exit quality ratings, emotions, mistakes, lessons
+- **Media**: screenshot paths, notes
+- **Tags**: custom tags for filtering
 
 ## Strategy Class
 
@@ -286,11 +367,13 @@ See the `examples/` directory for complete strategies:
 
 - `sma_strategy.py` - Simple moving average crossover strategy
 - `oco_bracket_strategy.py` - Demonstrates OCO bracket orders with configurable TP/SL
+- `data_and_journal.py` - Shows data loading and trade journal features
 
 Run an example:
 ```bash
 cd examples
 python oco_bracket_strategy.py
+python data_and_journal.py
 ```
 
 ## Project Structure
@@ -309,10 +392,15 @@ futures-backtesting/
 │   │   └── plotting.py      # Visualization
 │   ├── contracts/
 │   │   └── micros.py        # Micro futures specs
-│   └── prop_firms/
-│       └── configs.py       # Prop firm configurations
+│   ├── prop_firms/
+│   │   └── configs.py       # Prop firm configurations
+│   └── utils/
+│       ├── data_loaders.py  # CSV/Parquet loaders
+│       └── journal.py       # Trade journal
 ├── examples/
-│   └── sma_strategy.py
+│   ├── sma_strategy.py
+│   ├── oco_bracket_strategy.py
+│   └── data_and_journal.py
 ├── tests/
 ├── requirements.txt
 ├── setup.py
@@ -323,16 +411,16 @@ futures-backtesting/
 
 - [x] OCO bracket order support
 - [x] Prop firm risk management
+- [x] CSV/parquet data loaders
+- [x] Trade journaling and analytics
 - [ ] Walk-forward optimization
 - [ ] More prop firm configs (Apex, The5ers, etc.)
-- [ ] CSV/parquet data loaders
 - [ ] Monte Carlo simulation
 - [ ] Parameter optimization (grid search, genetic algorithms)
 - [ ] Jupyter notebook examples
 - [ ] Live trading integration (Interactive Brokers, Tradovate)
 - [ ] Multi-threading for faster backtests
 - [ ] Custom indicator library
-- [ ] Trade journaling and analytics
 
 ## License
 
